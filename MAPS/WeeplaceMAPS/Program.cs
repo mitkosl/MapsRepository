@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Data;
 using System.Diagnostics;
@@ -21,6 +21,7 @@ namespace WeeplaceMAPS
         public static float epsOne = 0.25F;
         public static float epsTwo = 0.75F;
         public static float error = 0.001F;
+        public static int intervalHours = 1;
         public static List<string> distinctLocs = null;
 
         public static List<string> GetDiffUsers(List<CheckIn> checkInInfo)
@@ -281,8 +282,7 @@ namespace WeeplaceMAPS
             return (alpha * thetas[position] + 1 - alpha) / (2 - alpha);
         }
 
-        public static float FindUnifiedRank(List<CheckIn> checkInInfo, string placeId, DateTime t1, DateTime t2,
-            bool catRankncluded, bool distRankIncluded)
+        public static float FindUnifiedRank(List<CheckIn> checkInInfo, string placeId, DateTime t1, DateTime t2, bool catRankncluded, bool distRankIncluded)
         {
             var catRank = catRankncluded ? FindCategoryRank(checkInInfo, placeId, t1, t2) : 0.0F;
             var distRank = distRankIncluded ? FindDistanceRank(checkInInfo, placeId, t1, t2) : 0.0F;
@@ -342,8 +342,7 @@ namespace WeeplaceMAPS
             return (nS / n) * (float)(Math.Log(1 + N / Ns));
         }
 
-        public static int GetVisitsByUsers(List<string> users, List<CheckIn> checkInInfo,
-            Dictionary<string, List<string>> userFriends)
+        public static int GetVisitsByUsers(List<string> users, List<CheckIn> checkInInfo, Dictionary<string, List<string>> userFriends)
         {
             var count = 0;
             //foreach (var user in users)
@@ -380,8 +379,7 @@ namespace WeeplaceMAPS
         }
 
         //Get the sum of the number of visits by the current user in the dataset to the locations within the threshold distance and within the time interval(t1, t2)
-        public static int VisitsByUserAndDistance(List<CheckIn> checkInInfo, string placeId, string userId,
-            DateTime t1, DateTime t2)
+        public static int VisitsByUserAndDistance(List<CheckIn> checkInInfo, string placeId, string userId, DateTime t1, DateTime t2)
         {
             var checkIn = checkInInfo.First(c => c.PlaceId.Equals(placeId));
             var latitude = checkIn.Latitude;
@@ -410,8 +408,7 @@ namespace WeeplaceMAPS
         }
 
         //Get the sum of the number of visits by the friends of the current user in the dataset to the current location with the same category within the time interval (t1, t2)
-        public static int VisitsByUserFriends(List<CheckIn> checkInInfo, Dictionary<string, List<string>> userFriends, string placeId, string userId,
-            DateTime t1, DateTime t2)
+        public static int VisitsByUserFriends(List<CheckIn> checkInInfo, Dictionary<string, List<string>> userFriends, string placeId, string userId, DateTime t1, DateTime t2)
         {
             var userFriendsList = userFriends[userId];
 
@@ -423,8 +420,7 @@ namespace WeeplaceMAPS
             return sum;
         }
 
-        public static float GetProbability(List<CheckIn> checkInInfo, Dictionary<string, List<string>> userFriends, 
-            string userId, string placeId, DateTime t1, DateTime t2, bool catRankIncluded = true, bool distRankIncluded = true)
+        public static float CalculateProbability(List<CheckIn> checkInInfo, Dictionary<string, List<string>> userFriends, string userId, string placeId, DateTime t1, DateTime t2, bool catRankIncluded = true, bool distRankIncluded = true)
         {
             var P = FindUnifiedRank(checkInInfo, placeId, t1, t2, catRankIncluded, distRankIncluded)*
                     (CalculatePsiD(checkInInfo, userId, placeId)*
@@ -435,6 +431,125 @@ namespace WeeplaceMAPS
                      VisitsByUserFriends(checkInInfo, userFriends, placeId, userId, t1, t2));
 
             return P;
+        }
+
+
+        public static List<List<CheckIn>> SplitDatasetIntoParts(List<CheckIn> allData, int count = 5) {
+            List<List<CheckIn>> result = new List<List<CheckIn>>();
+            int counter = 0;
+            for (int i = 0; i < count; i++)
+            {
+                result.Add(new List<CheckIn>());
+            }
+
+            for (int i = 0; i < count; i++)
+            {
+                result[i].Add(allData[counter++]);
+                
+            }
+            return result;
+        }
+
+
+        public static List<Dictionary<string, List<float>>> CalculateFMetrics(List<CheckIn> checkInInfo, Dictionary<string, List<string>> userFriends)
+        {
+            List<List<CheckIn>> sets = SplitDatasetIntoParts(checkInInfo, 5);
+            List<Dictionary<string, List<float>>> results = new List<Dictionary<string, List<float>>>();
+            for (int i = 0; i < sets.Count; i++)
+            {
+                List<List<float>> tempResults = new List<List<float>>();
+                List<string> distinctLocationsInTrainSet = new List<string>();
+                for (int j = 0; j < sets.Count; j++)
+                {
+                    if (i == j) continue;
+                    List<string> distinctLocationsInSet = sets[j].GroupBy(c => c.PlaceId).Select(c => c.First().PlaceId).ToList();
+                    distinctLocationsInTrainSet = distinctLocationsInTrainSet.Union(distinctLocationsInSet).ToList();
+
+                    Dictionary<string, List<float>> probabilities = new Dictionary<string, List<float>>(distinctLocationsInSet.Count);
+                    List<float> probabilitiesForCheckin = new List<float>(distinctLocationsInTrainSet.Count);
+                    List<float> precision = new List<float>(distinctLocationsInTrainSet.Count);
+                    List<float> recall = new List<float>(distinctLocationsInTrainSet.Count);
+                    List<float> FMetric = new List<float>(distinctLocationsInTrainSet.Count);
+
+                    Dictionary<string, List<float>> precisionAll = new Dictionary<string, List<float>>();
+                    Dictionary<string, List<float>> recallAll = new Dictionary<string, List<float>>();
+                    Dictionary<string, List<float>> FMetricAll = new Dictionary<string, List<float>>();
+
+                    Dictionary<string, List<float>> precision5 = new Dictionary<string, List<float>>();
+                    Dictionary<string, List<float>> recall5 = new Dictionary<string, List<float>>();
+                    Dictionary<string, List<float>> FMetric5 = new Dictionary<string, List<float>>();
+
+                    Dictionary<string, List<float>> precision10 = new Dictionary<string, List<float>>();
+                    Dictionary<string, List<float>> recall10 = new Dictionary<string, List<float>>();
+                    Dictionary<string, List<float>> FMetric10 = new Dictionary<string, List<float>>();
+
+                    Dictionary<string, List<float>> precision15 = new Dictionary<string, List<float>>();
+                    Dictionary<string, List<float>> recall15 = new Dictionary<string, List<float>>();
+                    Dictionary<string, List<float>> FMetric15 = new Dictionary<string, List<float>>();
+
+                    for (int k = 0; k < distinctLocationsInTrainSet.Count; k++)
+                    {
+                        var location = distinctLocationsInTrainSet[k];
+                        for (int m = 0; m < sets[j].Count; m++)
+                        {
+                            if (i == m) continue;
+                            var t1 = sets[j][m].DateTime;
+                            var t2 = t1.AddHours(intervalHours);
+                            var user = sets[j][m].UserId;
+                            probabilities[location][m] = CalculateProbability(checkInInfo, userFriends, user, location, t1, t2);
+                        }
+                        for (int mm = 0; mm < sets[j].Count; mm++)
+                        {
+
+                            var user = sets[j][mm].UserId;
+                            var relevant = sets[i].Count(c => c.UserId.Equals(user) && c.PlaceId.Equals(location));
+                            var allRelevant = checkInInfo.Count(c => c.UserId.Equals(user) && c.PlaceId.Equals(location));
+                            precision[mm] = relevant / probabilitiesForCheckin.Count;
+                            recall[mm] = probabilitiesForCheckin.Count / allRelevant;
+                            //(2*P*R/(P+R))
+                            FMetric[mm] = 2 * precision[mm] * recall[mm] / (precision[mm] + recall[mm]);
+
+                            List<float> list = probabilities[location];
+                            list.Sort();
+
+                            Dictionary<string, List<float>> listAll = new Dictionary<string, List<float>>();
+                            listAll[location] = list.ToList();
+
+                            precisionAll[location][mm] = relevant / listAll.Count;
+                            recallAll[location][mm] = relevant / allRelevant;
+                            FMetricAll[location][mm] = 2 * precisionAll[location][mm] * recallAll[location][mm] / (precisionAll[location][mm] + recallAll[location][mm]);
+
+                            Dictionary<string, List<float>> list5 = new Dictionary<string, List<float>>();
+                            list5[location] = list.Take(5).ToList();
+
+                            precision5[location][mm] = relevant / 5;
+                            recall5[location][mm] = relevant / allRelevant;
+                            FMetric5[location][mm] = 2 * precision5[location][mm] * recall5[location][mm] / (precision5[location][mm] + recall5[location][mm]);
+
+                            Dictionary<string, List<float>> list10 = new Dictionary<string, List<float>>();
+                            list10[location] = list.Take(10).ToList();
+
+                            precision10[location][mm] = relevant / 10;
+                            recall10[location][mm] = relevant / allRelevant;
+                            FMetric10[location][mm] = 2 * precision10[location][mm] * recall10[location][mm] / (precision10[location][mm] + recall10[location][mm]);
+
+                            Dictionary<string, List<float>> list15 = new Dictionary<string, List<float>>();
+                            list15[location] = list.Take(15).ToList();
+
+                            precision15[location][mm] = relevant / 15;
+                            recall15[location][mm] = relevant / allRelevant;
+                            FMetric15[location][mm] = 2 * precision15[location][mm] * recall15[location][mm] / (precision15[location][mm] + recall15[location][mm]);
+                        }
+                    }
+                    for (int i = 0; i < distinctLocationsInTrainSet.Count; i++)
+                    {
+                        Dictionary<string, List<float>> locDict = new Dictionary<string, List<float>>();
+                        locDict[distinctLocationsInTrainSet[i]] = FMetricAll[distinctLocationsInSet[i]];
+                        results.Add(locDict);
+                    }
+                }
+            }
+            return results;
         }
 
         public static void Main(string[] args)
@@ -522,7 +637,7 @@ namespace WeeplaceMAPS
                 }
             }
 
-            Console.WriteLine("P = " + GetProbability(checkInInfo, userFriends, "fred-wilson", "jeffreys-grocery-and-luncheonette-new-york", DateTime.Parse("2010-10-25T12:03:10"), DateTime.Parse("2010-10-25T12:33:10"), true, false));
+            Console.WriteLine("P = " + CalculateProbability(checkInInfo, userFriends, "fred-wilson", "jeffreys-grocery-and-luncheonette-new-york", DateTime.Parse("2010-10-25T12:03:10"), DateTime.Parse("2010-10-25T12:33:10"), true, false));
             distinctLocs = checkInInfo.GroupBy(c => c.PlaceId).Select(c => c.First().PlaceId).ToList();
             stopwatch.Stop();
             var elapsedTime = stopwatch.ElapsedMilliseconds;
